@@ -1,0 +1,52 @@
+# Routes newly opened issues to project boards.
+#  - every issue            -> repo sprint board  (project 5)
+#  - scope: cross-repo or
+#    type: feature          -> org portfolio      (project 2)
+# Requires secret PROJECT_TOKEN: a PAT (classic: `project` + `repo`) or GitHub App
+# token with read/write on the org's Projects. GITHUB_TOKEN cannot write org projects.
+name: Project auto-intake
+
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      issue_url:
+        description: Issue URL to (re)route
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  ORG: Mr-Number-One-Learning
+  REPO_PROJECT: "5"
+  ORG_PROJECT: "2"
+  GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+
+jobs:
+  route:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check token
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::Secret PROJECT_TOKEN is not set"; exit 1
+          fi
+      - name: Add to repository sprint board
+        run: |
+          URL="${{ github.event.issue.html_url || inputs.issue_url }}"
+          gh project item-add "$REPO_PROJECT" --owner "$ORG" --url "$URL"
+      - name: Add to organization portfolio when cross-repo or feature
+        env:
+          LABELS: ${{ join(github.event.issue.labels.*.name, '|') }}
+        run: |
+          URL="${{ github.event.issue.html_url || inputs.issue_url }}"
+          if [ -z "$LABELS" ]; then
+            LABELS=$(gh issue view "$URL" --json labels --jq '[.labels[].name]|join("|")')
+          fi
+          case "|$LABELS|" in
+            *"|scope: cross-repo|"*|*"|type: feature|"*)
+              gh project item-add "$ORG_PROJECT" --owner "$ORG" --url "$URL" ;;
+            *) echo "No org-level label; skipping portfolio." ;;
+          esac
